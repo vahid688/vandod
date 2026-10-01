@@ -1,0 +1,4 @@
+-- Removable sample catalog. No auth accounts or role assignments are seeded.
+insert into public.categories(name,color) values ('Clubs','#227869'),('Arts','#9b5c90'),('Sports','#ba7435'),('Leadership','#4768a2'),('Academic','#6954a0'),('Volunteer','#687c42') on conflict(name) do nothing;
+insert into public.organizations(name,description) values ('Robotics Club','Build, experiment, and solve problems together.'),('Senior Jazz Band','Make music with our school ensemble.'),('Varsity Basketball','Support our team on and off the court.'),('Student Council','Your voice in school life.'),('Guidance Office','Plan your next chapter.'),('Community Volunteers','Make a difference together.') on conflict(name) do nothing;
+-- Create sample events while signed in as Owner through the app, preserving audit identity.
