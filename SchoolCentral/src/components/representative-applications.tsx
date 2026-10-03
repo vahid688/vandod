@@ -1,5 +1,4 @@
 'use client';
-import {useEffect} from 'react';
 import {Button} from './ui/button';
 import {TeacherPicker} from './teacher-picker';
 import {db,demo} from '@/data/supabase';
@@ -115,12 +114,12 @@ export function ApplicationCenter({state,user,setState,run,busy}:Props){
   </>
 }
 
-export function OwnerApplications({state,user,setState,run,busy}:Props){
+export function OwnerApplications({state,user}:{state:State;user:Profile}){
   if(user.role!=='Owner')return null;
-  const approved=state.applications.filter(a=>a.status==='approved');
+  const approved=state.applications.filter(a=>a.status==='teacher_approved'||a.status==='approved');
   return <>
-    <div className="section-title"><h2>Representative approvals <span>{approved.length}</span></h2></div>
-    <p>Teachers handle application approvals. Once approved by a teacher, access is granted automatically.</p>
+    <div className="section-title"><h2>Approved representatives <span>{approved.length}</span></h2></div>
+    <p>Teachers review and approve club applications directly. Once a teacher approves, the applicant gains Representative access immediately.</p>
     {approved.length===0?
       <div className="empty"><h3>No approved applications yet</h3></div>
     :
@@ -149,7 +148,7 @@ export function TeacherDirectory({state,user,setState,run,busy}:Props){
       void run(async()=>{
         if(state.teachers.some(t=>t.email===email))throw Error('This teacher is already authorized.');
         if(demo){
-          setState(s=>({...s,teachers:[...s.teachers,{email,created_at:new Date().toISOString()}]}));
+          setState(s=>({...s,teachers:[...s.teachers,{email,name:email.split('@')[0]}]}));
         }else{
           const result=await api('/api/teacher-management',{action:'add',email});
           if(result.error)throw Error(result.error);
@@ -166,7 +165,7 @@ export function TeacherDirectory({state,user,setState,run,busy}:Props){
     :
       state.teachers.map(t=>
         <div className="user-row" key={t.email}>
-          <div><b>{t.email}</b><p>Added {new Date(t.created_at).toLocaleDateString()}</p></div>
+          <div><b>{t.email}</b><p>{t.name}</p></div>
           <Button variant="destructive" disabled={busy} onClick={()=>{
             if(confirm(`Remove ${t.email}?`))
               void run(async()=>{
