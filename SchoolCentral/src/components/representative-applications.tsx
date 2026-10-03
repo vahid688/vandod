@@ -98,7 +98,7 @@ export function ApplicationCenter({state,user,setState,run,busy}:Props){
       </div>
     :
       applications.map(a=>
-        <article className={`application-card${a.status==='approved'?' approved-application':''}`} key={a.id}>
+        <article className={`application-card${a.status==='approved'||a.status==='teacher_approved'?' approved-application':''}`} key={a.id}>
           <span className="tag">{labels[a.status]}</span>
           <h3>{a.club_name}</h3>
           <p>{a.description}</p>
@@ -113,10 +113,13 @@ export function ApplicationCenter({state,user,setState,run,busy}:Props){
               setState(s=>({...s,applications:s.applications.map(app=>app.id===a.id?{...app,status:'approved'}:app)}));
             }}>Demo: Approve this application</Button>
           }
-          {a.status==='approved'&&
+          {(a.status==='approved'||a.status==='teacher_approved')&&
             <div className="approval-actions">
               <p className="approval-message">🎉 Your application has been approved! You are now a Representative and can manage this club.</p>
-              <Button disabled={busy}>Accept representative role</Button>
+              <Button disabled={busy} onClick={()=>void run(async()=>{
+                await api('/api/accept-representative',{application_id:a.id});
+                setState(await loadState());
+              },'You are now a Representative! Refreshing your account...')}>Accept representative role</Button>
             </div>
           }
         </article>
