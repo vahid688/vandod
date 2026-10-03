@@ -6,7 +6,6 @@ create table public.representative_applications(
  status text not null default 'pending_teacher' check(status in ('pending_teacher','teacher_approved','teacher_rejected','approved','rejected')),
  created_at timestamptz not null default now(),teacher_reviewed_at timestamptz,owner_reviewed_at timestamptz,organization_id uuid references public.organizations on delete restrict
 );
-create unique index one_open_club_application on public.representative_applications(user_id,lower(club_name)) where status in ('pending_teacher','teacher_approved');
 create index applications_user on public.representative_applications(user_id,created_at);
 create index applications_status on public.representative_applications(status,created_at);
 create table public.teacher_approval_tokens(application_id uuid primary key references public.representative_applications on delete cascade,token_hash text not null unique,expires_at timestamptz not null,used_at timestamptz,last_sent_at timestamptz not null default now());
@@ -32,24 +31,30 @@ begin
  select * into person from public.profiles where id=auth.uid();
  if not exists(select 1 from auth.users where id=auth.uid() and email_confirmed_at is not null) then raise exception 'Confirm your own email first';end if;
  if not exists(select 1 from public.approved_teachers where email=lower(trim(teacher))) then raise exception 'This teacher email is not authorized. Ask the Owner to add your teacher.';end if;
- -- Serialize submissions by this user and cap requests to avoid email flooding.
+ -- Serialize submissions by this user and this teacher
  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text,0));
  perform pg_advisory_xact_lock(hashtextextended(lower(trim(teacher)),1));
- if (select count(*) from public.representative_applications where user_id=auth.uid() and created_at>now()-interval '1 day')>=3 then raise exception 'You can submit up to three applications per day';end if;
- if (select count(*) from public.representative_applications where teacher_email=lower(trim(teacher)) and created_at>now()-interval '1 hour')>=10 then raise exception 'This teacher has received too many requests recently. Try later.';end if;
  insert into public.representative_applications(user_id,applicant_name,club_name,description,teacher_email) values(auth.uid(),person.name,trim(club),trim(brief),lower(trim(teacher))) returning id into application;
  return application;
 end$$;
 create function public.review_teacher_application(hash text,approve boolean) returns void language plpgsql security definer set search_path='' as $$
-declare token public.teacher_approval_tokens; application public.representative_applications;
+declare token public.teacher_approval_tokens; application public.representative_applications; chosen uuid;
 begin
  select * into token from public.teacher_approval_tokens where token_hash=hash for update;
  if not found or token.used_at is not null or token.expires_at<=now() then raise exception 'This approval link is expired or already used';end if;
  select * into application from public.representative_applications where id=token.application_id for update;
  if application.status<>'pending_teacher' or not exists(select 1 from public.approved_teachers where email=application.teacher_email) then raise exception 'This application is no longer eligible for teacher review';end if;
  update public.teacher_approval_tokens set used_at=now() where application_id=application.id;
- update public.representative_applications set status=case when approve then 'teacher_approved' else 'teacher_rejected' end,teacher_reviewed_at=now() where id=application.id;
- if approve then insert into public.application_notification_outbox(application_id) values(application.id) on conflict do nothing;end if;
+ if approve then
+  if not exists(select 1 from public.profiles where id=application.user_id and active) then raise exception 'Applicant account is disabled';end if;
+  if exists(select 1 from public.user_roles where user_id=application.user_id and role='Owner') then raise exception 'Cannot modify Owner';end if;
+  insert into public.organizations(name,description) values(application.club_name,application.description) returning id into chosen;
+  update public.user_roles set role='Representative' where user_id=application.user_id;
+  insert into public.organization_representatives(user_id,organization_id) values(application.user_id,chosen) on conflict do nothing;
+  update public.representative_applications set status='approved',teacher_reviewed_at=now(),organization_id=chosen where id=application.id;
+ else
+  update public.representative_applications set status='teacher_rejected',teacher_reviewed_at=now() where id=application.id;
+ end if;
 end$$;
 create function public.finalize_representative_application(application_id uuid,approve boolean,organization uuid default null) returns void language plpgsql security definer set search_path='' as $$
 declare application public.representative_applications; chosen uuid;

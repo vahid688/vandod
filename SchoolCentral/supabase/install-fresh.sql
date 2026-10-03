@@ -76,7 +76,6 @@ create table public.representative_applications(
  status text not null default 'pending_teacher' check(status in ('pending_teacher','teacher_approved','teacher_rejected','approved','rejected')),
  created_at timestamptz not null default now(),teacher_reviewed_at timestamptz,owner_reviewed_at timestamptz,organization_id uuid references public.organizations on delete restrict
 );
-create unique index one_open_club_application on public.representative_applications(user_id,lower(club_name)) where status in ('pending_teacher','teacher_approved');
 create index applications_user on public.representative_applications(user_id,created_at);
 create index applications_status on public.representative_applications(status,created_at);
 create table public.teacher_approval_tokens(application_id uuid primary key references public.representative_applications on delete cascade,token_hash text not null unique,expires_at timestamptz not null,used_at timestamptz,last_sent_at timestamptz not null default now());
@@ -102,11 +101,9 @@ begin
  select * into person from public.profiles where id=auth.uid();
  if not exists(select 1 from auth.users where id=auth.uid() and email_confirmed_at is not null) then raise exception 'Confirm your own email first';end if;
  if not exists(select 1 from public.approved_teachers where email=lower(trim(teacher))) then raise exception 'This teacher email is not authorized. Ask the Owner to add your teacher.';end if;
- -- Serialize submissions by this user and cap requests to avoid email flooding.
+ -- Serialize submissions by this user and this teacher
  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text,0));
  perform pg_advisory_xact_lock(hashtextextended(lower(trim(teacher)),1));
- if (select count(*) from public.representative_applications where user_id=auth.uid() and created_at>now()-interval '1 day')>=3 then raise exception 'You can submit up to three applications per day';end if;
- if (select count(*) from public.representative_applications where teacher_email=lower(trim(teacher)) and created_at>now()-interval '1 hour')>=10 then raise exception 'This teacher has received too many requests recently. Try later.';end if;
  insert into public.representative_applications(user_id,applicant_name,club_name,description,teacher_email) values(auth.uid(),person.name,trim(club),trim(brief),lower(trim(teacher))) returning id into application;
  return application;
 end$$;

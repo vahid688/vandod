@@ -6,10 +6,181 @@ import {db,demo} from '@/data/supabase';
 import {loadState} from '@/data/repository';
 import {validateApplication} from '@/domain/applications';
 import type {Profile,State,RepresentativeApplication} from '@/domain/types';
-const labels:Record<RepresentativeApplication['status'],string>={pending_teacher:'Awaiting teacher approval',teacher_approved:'Teacher approved · awaiting Owner',teacher_rejected:'Declined by teacher',approved:'Approved · Representative access granted',rejected:'Declined by Owner'};
-type Props={state:State;user:Profile;setState:React.Dispatch<React.SetStateAction<State>>;run:(operation:()=>Promise<void>,message?:string)=>Promise<void>;busy:boolean};
-async function api(path:string,input:unknown){const {data}=await db!.auth.getSession();const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${data.session?.access_token||''}`},body:JSON.stringify(input)});const body=await response.json();if(!response.ok)throw Error(body.error||'Request failed.');return body;}
-export function ApplicationCenter({state,user,setState,run,busy}:Props){const applications=state.applications.filter(a=>a.user_id===user.id);return <><div className="application-steps"><span>1. Your application</span><span>2. Teacher approval</span><span>3. Owner approval</span></div><p>You keep your current permissions while your application is reviewed. A teacher must approve first, then the Owner grants access to the organization.</p><form className="settings-form application-form" onSubmit={event=>{event.preventDefault();const form=event.currentTarget,fields=new FormData(form);const input={club_name:String(fields.get('club_name')).trim(),description:String(fields.get('description')).trim(),teacher_email:String(fields.get('teacher_email')).trim().toLowerCase()};void run(async()=>{validateApplication(input);if(demo){if(!state.teachers.some(t=>t.email===input.teacher_email))throw Error('This teacher email is not authorized. Ask the Owner to add it first.');if(applications.some(a=>a.club_name.toLowerCase()===input.club_name.toLowerCase()&&['pending_teacher','teacher_approved'].includes(a.status)))throw Error('You already have an open application for this club.');const application:RepresentativeApplication={id:crypto.randomUUID(),user_id:user.id,applicant_name:user.name,...input,status:'pending_teacher',created_at:new Date().toISOString(),teacher_reviewed_at:null,owner_reviewed_at:null,organization_id:null};setState(s=>({...s,applications:[application,...s.applications]}));}else{const result=await api('/api/representative-applications',input);setState(await loadState());form.reset();if(result.delivery_failed)throw Error(result.message);}form.reset();},demo?'Demo application submitted. No email was sent.':'Application submitted. Check its status below.') }}><label>Club or organization name<input name="club_name" required minLength={2} maxLength={120} placeholder="e.g. Robotics Club"/></label><label>Brief description<textarea name="description" required minLength={10} maxLength={1000} rows={4} placeholder="Describe your club and your role in it."/></label><TeacherPicker key={state.applications.length} teachers={state.teachers}/><p className="form-help">Use a teacher email authorized by the Owner. The teacher receives a secure link to approve or decline your request.</p>{demo&&<p className="demo-note">Local demo: select an authorized teacher above. The Owner can simulate teacher review under Applications. No actual email is sent.</p>}<Button disabled={busy}>Submit application</Button></form><div className="section-title"><h2>Your applications</h2></div>{applications.length===0?<div className="empty"><h3>No applications yet</h3><p>Submit your club details above to get started.</p></div>:applications.map(a=><article className="application-card" key={a.id}><span className="tag">{labels[a.status]}</span><h3>{a.club_name}</h3><p>{a.description}</p><small>Teacher: {a.teacher_email} · Submitted {new Date(a.created_at).toLocaleDateString()}</small>{a.status==='pending_teacher'&&!demo&&<Button variant="outline" disabled={busy} onClick={()=>void run(async()=>{await api('/api/representative-applications',{resend_id:a.id})},'Teacher approval email sent.')}>Resend teacher email</Button>}</article>)}</>}
-export function OwnerApplications({state,user,setState,run,busy}:Props){useEffect(()=>{if(!demo)void api('/api/application-notifications',{}).catch(()=>{});},[]);if(user.role!=='Owner')return null;return <><div className="section-title"><h2>Teacher-approved applications <span>{state.applications.filter(a=>a.status==='teacher_approved').length}</span></h2></div><p>Teacher approval verifies the request. Your final approval grants Representative access only to the selected organization.</p>{state.applications.length===0?<div className="empty"><h3>No applications yet</h3><p>Submitted requests will appear here.</p></div>:state.applications.map(a=><article className="application-card" key={a.id}><span className="tag">{labels[a.status]}</span><h3>{a.club_name}</h3><p>{a.description}</p><p><b>{a.applicant_name}</b> · {state.profiles.find(p=>p.id===a.user_id)?.email}</p><small>Approving teacher: {a.teacher_email}</small>{demo&&a.status==='pending_teacher'&&<div className="demo-note"><b>Local demo simulation · no teacher email is sent</b><div className="modal-actions"><Button variant="outline" disabled={busy} onClick={()=>void run(async()=>{setState(s=>({...s,applications:s.applications.map(item=>item.id===a.id?{...item,status:'teacher_approved',teacher_reviewed_at:new Date().toISOString()}:item)}))},'Demo teacher approved. This application now awaits you.')}>Simulate teacher approval</Button><Button variant="destructive" disabled={busy} onClick={()=>void run(async()=>{setState(s=>({...s,applications:s.applications.map(item=>item.id===a.id?{...item,status:'teacher_rejected',teacher_reviewed_at:new Date().toISOString()}:item)}))},'Demo teacher declined.')}>Simulate teacher decline</Button></div></div>}{a.status==='teacher_approved'&&<form onSubmit={event=>{event.preventDefault();const org=String(new FormData(event.currentTarget).get('organization_id')||'');void run(async()=>{if(demo){const profile=state.profiles.find(p=>p.id===a.user_id);if(!profile?.active||profile.role==='Owner')throw Error('Applicant cannot receive Representative access.');if(!state.teachers.some(t=>t.email===a.teacher_email))throw Error('Approving teacher is no longer authorized.');const id=org||crypto.randomUUID();if(!org&&state.organizations.some(o=>o.name.toLowerCase()===a.club_name.toLowerCase()))throw Error('This organization already exists. Select it from the list.');setState(s=>({...s,organizations:org?s.organizations:[...s.organizations,{id,name:a.club_name,description:a.description}],profiles:s.profiles.map(p=>p.id===a.user_id?{...p,role:'Representative'}:p),assignments:s.assignments.some(x=>x.user_id===a.user_id&&x.organization_id===id)?s.assignments:[...s.assignments,{user_id:a.user_id,organization_id:id}],applications:s.applications.map(item=>item.id===a.id?{...item,status:'approved',owner_reviewed_at:new Date().toISOString(),organization_id:id}:item)}));}else{const {error}=await db!.rpc('finalize_representative_application',{application_id:a.id,approve:true,organization:org||null});if(error)throw error;setState(await loadState());}},'Approved. Representative access granted.') }}><label>Organization to manage<select name="organization_id" defaultValue={state.organizations.find(o=>o.name.toLowerCase()===a.club_name.toLowerCase())?.id||''}><option value="">Create organization from application</option>{state.organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label><div className="modal-actions"><Button disabled={busy}>Approve & grant access</Button><Button type="button" variant="destructive" disabled={busy} onClick={()=>void run(async()=>{if(demo)setState(s=>({...s,applications:s.applications.map(item=>item.id===a.id?{...item,status:'rejected',owner_reviewed_at:new Date().toISOString()}:item)}));else{const {error}=await db!.rpc('finalize_representative_application',{application_id:a.id,approve:false,organization:null});if(error)throw error;setState(await loadState());}},'Application declined.')}>Decline application</Button></div></form>}</article>)}</>}
-export function TeacherDirectory({state,user,setState,run,busy}:Props){if(user.role!=='Owner')return null;return <><p>Only these email addresses may approve Representative applications. Confirm each teacher’s identity before adding them.</p><form className="inline-form" onSubmit={event=>{event.preventDefault();const form=event.currentTarget,f=new FormData(form),record={name:String(f.get('name')).trim(),email:String(f.get('email')).trim().toLowerCase()};void run(async()=>{if(demo){if(state.teachers.some(t=>t.email===record.email))throw Error('This teacher is already authorized.');setState(s=>({...s,teachers:[...s.teachers,record]}));}else{const {error}=await db!.from('approved_teachers').insert(record);if(error)throw error;setState(await loadState());}form.reset();},'Teacher email authorized.')}}><input name="name" aria-label="Teacher name" placeholder="Teacher name" required maxLength={120}/><input name="email" aria-label="Teacher email" placeholder="Teacher’s school email" type="email" required maxLength={254}/><Button disabled={busy}>Authorize teacher</Button></form>{state.teachers.map(t=><div className="admin-row" key={t.email}><span><b>{t.name}</b><br/>{t.email}</span><Button variant="destructive" disabled={busy} onClick={()=>{if(confirm(`Remove ${t.name}'s approval authority? Outstanding links will no longer work.`))void run(async()=>{if(demo)setState(s=>({...s,teachers:s.teachers.filter(x=>x.email!==t.email)}));else{const {error}=await db!.from('approved_teachers').delete().eq('email',t.email);if(error)throw error;setState(await loadState());}},'Teacher approval authority removed.')}}>Remove</Button></div>)}</>}
 
+const labels:Record<RepresentativeApplication['status'],string>={
+  pending_teacher:'Awaiting teacher approval',
+  teacher_approved:'Approved · Representative access granted',
+  teacher_rejected:'Declined by teacher',
+  approved:'Approved · Representative access granted',
+  rejected:'Declined by teacher'
+};
+
+type Props={
+  state:State;
+  user:Profile;
+  setState:React.Dispatch<React.SetStateAction<State>>;
+  run:(operation:()=>Promise<void>,message?:string)=>Promise<void>;
+  busy:boolean
+};
+
+async function api(path:string,input:unknown){
+  const {data}=await db!.auth.getSession();
+  const response=await fetch(path,{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      Authorization:`Bearer ${data.session?.access_token||''}`
+    },
+    body:JSON.stringify(input)
+  });
+  const body=await response.json();
+  if(!response.ok)throw Error(body.error||'Request failed.');
+  return body;
+}
+
+export function ApplicationCenter({state,user,setState,run,busy}:Props){
+  const applications=state.applications.filter(a=>a.user_id===user.id);
+  return <>
+    <div className="application-steps">
+      <span>1. Your application</span>
+      <span>2. Teacher approval</span>
+    </div>
+    <p>You keep your current permissions while your application is reviewed. A teacher will approve or decline your request.</p>
+    <form className="settings-form application-form" onSubmit={event=>{
+      event.preventDefault();
+      const form=event.currentTarget,fields=new FormData(form);
+      const input={
+        club_name:String(fields.get('club_name')).trim(),
+        description:String(fields.get('description')).trim(),
+        teacher_email:String(fields.get('teacher_email')).trim().toLowerCase()
+      };
+      void run(async()=>{
+        validateApplication(input);
+        if(demo){
+          if(!state.teachers.some(t=>t.email===input.teacher_email))
+            throw Error('This teacher email is not authorized. Ask the Owner to add it first.');
+          const application:RepresentativeApplication={
+            id:crypto.randomUUID(),
+            user_id:user.id,
+            applicant_name:user.name,
+            ...input,
+            status:'pending_teacher',
+            created_at:new Date().toISOString(),
+            teacher_reviewed_at:null,
+            owner_reviewed_at:null,
+            organization_id:null
+          };
+          setState(s=>({...s,applications:[application,...s.applications]}));
+        }else{
+          const result=await api('/api/representative-applications',input);
+          setState(await loadState());
+          form.reset();
+          if(result.delivery_failed)throw Error(result.message);
+        }
+        form.reset();
+      },demo?'Demo application submitted. No email was sent.':'Application submitted. Check its status below.');
+    }}>
+      <label>Club or organization name
+        <input name="club_name" required minLength={2} maxLength={120} placeholder="e.g. Robotics Club"/>
+      </label>
+      <label>Brief description
+        <textarea name="description" required minLength={10} maxLength={1000} rows={4} placeholder="Describe your club and your role in it."/>
+      </label>
+      <TeacherPicker key={state.applications.length} teachers={state.teachers}/>
+      <p className="form-help">Use a teacher email authorized by the Owner. The teacher receives a secure link to approve or decline your request.</p>
+      {demo&&<p className="demo-note">Local demo: select an authorized teacher above. The teacher can simulate review under Applications. No actual email is sent.</p>}
+      <Button disabled={busy}>Submit application</Button>
+    </form>
+    <div className="section-title"><h2>Your applications</h2></div>
+    {applications.length===0?
+      <div className="empty">
+        <h3>No applications yet</h3>
+        <p>Submit your club details above to get started.</p>
+      </div>
+    :
+      applications.map(a=>
+        <article className="application-card" key={a.id}>
+          <span className="tag">{labels[a.status]}</span>
+          <h3>{a.club_name}</h3>
+          <p>{a.description}</p>
+          <small>Teacher: {a.teacher_email} · Submitted {new Date(a.created_at).toLocaleDateString()}</small>
+          {a.status==='pending_teacher'&&!demo&&
+            <Button variant="outline" disabled={busy} onClick={()=>void run(async()=>{
+              await api('/api/representative-applications',{resend_id:a.id})
+            },'Teacher approval email sent.')}>Resend teacher email</Button>
+          }
+        </article>
+      )
+    }
+  </>
+}
+
+export function OwnerApplications({state,user,setState,run,busy}:Props){
+  if(user.role!=='Owner')return null;
+  const approved=state.applications.filter(a=>a.status==='approved');
+  return <>
+    <div className="section-title"><h2>Representative approvals <span>{approved.length}</span></h2></div>
+    <p>Teachers handle application approvals. Once approved by a teacher, access is granted automatically.</p>
+    {approved.length===0?
+      <div className="empty"><h3>No approved applications yet</h3></div>
+    :
+      approved.map(a=>
+        <article className="application-card" key={a.id}>
+          <span className="tag">{labels[a.status]}</span>
+          <h3>{a.club_name}</h3>
+          <p>{a.description}</p>
+          <p><b>{a.applicant_name}</b> · {state.profiles.find(p=>p.id===a.user_id)?.email}</p>
+          <small>Approved by teacher: {a.teacher_email}</small>
+        </article>
+      )
+    }
+  </>
+}
+
+export function TeacherDirectory({state,user,setState,run,busy}:Props){
+  if(user.role!=='Owner')return null;
+  return <>
+    <div className="section-title"><h2>Authorized teachers <span>{state.teachers.length}</span></h2></div>
+    <p>Add teacher emails to authorize them to review club applications.</p>
+    <form className="inline-form" onSubmit={event=>{
+      event.preventDefault();
+      const form=event.currentTarget,fields=new FormData(form);
+      const email=String(fields.get('email')).trim().toLowerCase();
+      void run(async()=>{
+        if(state.teachers.some(t=>t.email===email))throw Error('This teacher is already authorized.');
+        if(demo){
+          setState(s=>({...s,teachers:[...s.teachers,{email,created_at:new Date().toISOString()}]}));
+        }else{
+          const result=await api('/api/teacher-management',{action:'add',email});
+          if(result.error)throw Error(result.error);
+          setState(await loadState());
+        }
+        form.reset();
+      },'Teacher email added.');
+    }}>
+      <input name="email" type="email" aria-label="Teacher email" placeholder="teacher@school.edu" required/>
+      <Button disabled={busy}>Add teacher</Button>
+    </form>
+    {state.teachers.length===0?
+      <div className="empty"><h3>No teachers authorized yet</h3><p>Add teacher emails to enable them to review applications.</p></div>
+    :
+      state.teachers.map(t=>
+        <div className="user-row" key={t.email}>
+          <div><b>{t.email}</b><p>Added {new Date(t.created_at).toLocaleDateString()}</p></div>
+          <Button variant="destructive" disabled={busy} onClick={()=>{
+            if(confirm(`Remove ${t.email}?`))
+              void run(async()=>{
+                if(demo){
+                  setState(s=>({...s,teachers:s.teachers.filter(x=>x.email!==t.email)}));
+                }else{
+                  const result=await api('/api/teacher-management',{action:'remove',email:t.email});
+                  if(result.error)throw Error(result.error);
+                  setState(await loadState());
+                }
+              },'Teacher email removed.');
+          }}>Remove</Button>
+        </div>
+      )
+    }
+  </>
+}
