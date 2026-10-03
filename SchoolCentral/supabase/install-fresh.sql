@@ -73,7 +73,7 @@ create table public.representative_applications(
  id uuid primary key default gen_random_uuid(),user_id uuid not null references public.profiles on delete cascade,
  applicant_name text not null,club_name text not null check(length(trim(club_name)) between 2 and 120),
  description text not null check(length(trim(description)) between 10 and 1000),teacher_email text not null,
- status text not null default 'pending_teacher' check(status in ('pending_teacher','teacher_approved','teacher_rejected','approved','rejected')),
+ status text not null default 'pending_teacher' check(status in ('pending_teacher','teacher_approved','teacher_rejected','approved','rejected','accepted')),
  created_at timestamptz not null default now(),teacher_reviewed_at timestamptz,owner_reviewed_at timestamptz,organization_id uuid references public.organizations on delete restrict
 );
 create index applications_user on public.representative_applications(user_id,created_at);

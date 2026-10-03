@@ -11,7 +11,8 @@ const labels:Record<RepresentativeApplication['status'],string>={
   teacher_approved:'Approved · Representative access granted',
   teacher_rejected:'Declined by teacher',
   approved:'Approved · Representative access granted',
-  rejected:'Declined by teacher'
+  rejected:'Declined by teacher',
+  accepted:'Representative role accepted'
 };
 
 type Props={
@@ -38,7 +39,7 @@ async function api(path:string,input:unknown){
 }
 
 export function ApplicationCenter({state,user,setState,run,busy}:Props){
-  const applications=state.applications.filter(a=>a.user_id===user.id);
+  const applications=state.applications.filter(a=>a.user_id===user.id && a.status!=='accepted');
   return <>
     <div className="application-steps">
       <span>1. Your application</span>
@@ -110,15 +111,27 @@ export function ApplicationCenter({state,user,setState,run,busy}:Props){
           }
           {a.status==='pending_teacher'&&demo&&
             <Button variant="outline" disabled={busy} onClick={()=>{
-              setState(s=>({...s,applications:s.applications.map(app=>app.id===a.id?{...app,status:'approved'}:app)}));
+              setState(s=>{
+                const orgId=crypto.randomUUID();
+                return {
+                  ...s,
+                  organizations:[...s.organizations,{id:orgId,name:a.club_name,description:a.description}],
+                  applications:s.applications.map(app=>app.id===a.id?{...app,status:'approved',organization_id:orgId}:app),
+                  assignments:[...s.assignments,{user_id:a.user_id,organization_id:orgId}]
+                };
+              });
             }}>Demo: Approve this application</Button>
           }
           {(a.status==='approved'||a.status==='teacher_approved')&&
             <div className="approval-actions">
               <p className="approval-message">🎉 Your application has been approved! You are now a Representative and can manage this club.</p>
               <Button disabled={busy} onClick={()=>void run(async()=>{
-                await api('/api/accept-representative',{application_id:a.id});
-                setState(await loadState());
+                if(demo){
+                  setState(s=>({...s,profiles:s.profiles.map(p=>p.id===a.user_id?{...p,role:'Representative'}:p),applications:s.applications.filter(app=>app.id!==a.id)}));
+                }else{
+                  await api('/api/accept-representative',{application_id:a.id});
+                  setState(await loadState());
+                }
               },'You are now a Representative! Refreshing your account...')}>Accept representative role</Button>
             </div>
           }
