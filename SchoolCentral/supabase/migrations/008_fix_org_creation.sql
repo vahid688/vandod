@@ -34,7 +34,8 @@ BEGIN
     -- Try to get existing org with same name, or create new one
     SELECT id INTO chosen FROM public.organizations WHERE name=application.club_name LIMIT 1;
     IF chosen IS NULL THEN
-      INSERT INTO public.organizations(name,description) VALUES(application.club_name,application.description) RETURNING id INTO chosen;
+      INSERT INTO public.organizations(name,description) VALUES(application.club_name,application.description) 
+      ON CONFLICT(name) DO UPDATE SET description=EXCLUDED.description RETURNING id INTO chosen;
     END IF;
     
     UPDATE public.user_roles SET role='Representative' WHERE user_id=application.user_id;

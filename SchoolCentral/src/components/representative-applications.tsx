@@ -105,22 +105,43 @@ export function ApplicationCenter({state,user,setState,run,busy}:Props){
           <p>{a.description}</p>
           <small>Teacher: {a.teacher_email} · Submitted {new Date(a.created_at).toLocaleDateString()}</small>
           {a.status==='pending_teacher'&&!demo&&
-            <Button variant="outline" disabled={busy} onClick={()=>void run(async()=>{
-              await api('/api/representative-applications',{resend_id:a.id})
-            },'Teacher approval email sent.')}>Resend teacher email</Button>
+            <>
+              <Button variant="outline" disabled={busy} onClick={()=>void run(async()=>{
+                await api('/api/representative-applications',{resend_id:a.id})
+              },'Teacher approval email sent.')}>Resend teacher email</Button>
+              <Button variant="destructive" disabled={busy} onClick={()=>{
+                if(confirm(`Cancel application for ${a.club_name}? This will invalidate the teacher approval link.`)){
+                  void run(async()=>{
+                    if(demo){
+                      setState(s=>({...s,applications:s.applications.filter(app=>app.id!==a.id)}));
+                    }else{
+                      await api('/api/representative-applications',{cancel_id:a.id});
+                      setState(await loadState());
+                    }
+                  },'Application cancelled.');
+                }
+              }}>Cancel application</Button>
+            </>
           }
           {a.status==='pending_teacher'&&demo&&
-            <Button variant="outline" disabled={busy} onClick={()=>{
-              setState(s=>{
-                const orgId=crypto.randomUUID();
-                return {
-                  ...s,
-                  organizations:[...s.organizations,{id:orgId,name:a.club_name,description:a.description}],
-                  applications:s.applications.map(app=>app.id===a.id?{...app,status:'approved',organization_id:orgId}:app),
-                  assignments:[...s.assignments,{user_id:a.user_id,organization_id:orgId}]
-                };
-              });
-            }}>Demo: Approve this application</Button>
+            <>
+              <Button variant="outline" disabled={busy} onClick={()=>{
+                setState(s=>{
+                  const orgId=crypto.randomUUID();
+                  return {
+                    ...s,
+                    organizations:[...s.organizations,{id:orgId,name:a.club_name,description:a.description}],
+                    applications:s.applications.map(app=>app.id===a.id?{...app,status:'approved',organization_id:orgId}:app),
+                    assignments:[...s.assignments,{user_id:a.user_id,organization_id:orgId}]
+                  };
+                });
+              }}>Demo: Approve this application</Button>
+              <Button variant="destructive" disabled={busy} onClick={()=>{
+                if(confirm(`Cancel application for ${a.club_name}?`)){
+                  setState(s=>({...s,applications:s.applications.filter(app=>app.id!==a.id)}));
+                }
+              }}>Cancel application</Button>
+            </>
           }
           {(a.status==='approved'||a.status==='teacher_approved')&&
             <div className="approval-actions">
